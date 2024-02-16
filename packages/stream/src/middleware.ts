@@ -54,7 +54,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 		console.log(`middleware :: ${suspenseCtx.pending.size} chunks pending`);
 		if (!suspenseCtx.pending.size) return streamController.close();
 
-		yield BOOTSTRAP_SCRIPT;
+		yield SCRIPT_START;
 
 		// @ts-expect-error ReadableStream does not have asyncIterator
 		for await (const item of stream) {
@@ -62,27 +62,43 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 			console.log("middleware :: yielding", id, chunk);
 			yield asyncChunkInsertionHTML(id, chunk);
 		}
+
+		yield SCRIPT_END;
 	}
 
 	// @ts-expect-error generator not assignable to ReadableStream
 	return new Response(render(), response.headers);
 });
 
-const BOOTSTRAP_SCRIPT = `<script>
-window.__SIMPLE_SUSPENSE_INSERT = function (id) {
-	try {
-		var template = document.querySelector('[data-suspense="' + id + '"]').content;
-		var dest = document.querySelector('[data-suspense-fallback="' + id + '"]');
-		dest.replaceWith(template);
-	} catch (e) {
-		console.error("Failed to insert async content (Suspense boundary id: " + id + ")", e);
-	}
+const SCRIPT_START = `<script>{
+let range = new Range();
+let insert = (id, content) => {
+	let fragment = range.createContextualFragment(content);
+	let selector = '[data-suspense-fallback="' + id + '"]';
+	let replacer = () => {
+		fallback = document.querySelector(selector);
+
+		if (fallback) {
+			fallback.replaceWith(fragment);
+		} else if (id-- > 0) {
+			queueMicrotask(replacer);
+		} else {
+			console.error(errormsg);
+		}
+	};
+	let errormsg = "Failed to insert async content (Suspense boundary id: " + id + ")";
+	let fallback;
+
+	replacer();
 };
-</script>`;
+
+range.selectNodeContents(document.createElement('template'));
+`.replace(/[\n\t]/g, '');
+
+const SCRIPT_END = `}</script>`
 
 function asyncChunkInsertionHTML(id: number, chunk: string) {
 	return (
-		`<template data-suspense=${id}>${chunk}</template>` +
-		`<script>window.__SIMPLE_SUSPENSE_INSERT(${id});</script>`
+		`insert(${id}, ${JSON.stringify(chunk)});`
 	);
 }
