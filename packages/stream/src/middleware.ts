@@ -54,7 +54,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 		console.log(`middleware :: ${suspenseCtx.pending.size} chunks pending`);
 		if (!suspenseCtx.pending.size) return streamController.close();
 
-		yield BOOTSTRAP_SCRIPT_START;
+		yield SCRIPT_START;
 
 		// @ts-expect-error ReadableStream does not have asyncIterator
 		for await (const item of stream) {
@@ -63,33 +63,42 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 			yield asyncChunkInsertionHTML(id, chunk);
 		}
 
-		yield BOOTSTRAP_SCRIPT_END;
+		yield SCRIPT_END;
 	}
 
 	// @ts-expect-error generator not assignable to ReadableStream
 	return new Response(render(), response.headers);
 });
 
-const BOOTSTRAP_SCRIPT_START = `<script>{
-const range = new Range();
-const template = document.createElement('template');
+const SCRIPT_START = `<script>{
+let range = new Range();
+let insert = (id, content) => {
+	let fragment = range.createContextualFragment(content);
+	let selector = '[data-suspense-fallback="' + id + '"]';
+	let replacer = () => {
+		fallback = document.querySelector(selector);
 
-range.selectNodeContents(template);
+		if (fallback) {
+			fallback.replaceWith(fragment);
+		} else if (id-- > 0) {
+			queueMicrotask(replacer);
+		} else {
+			console.error(errormsg);
+		}
+	};
+	let errormsg = "Failed to insert async content (Suspense boundary id: " + id + ")";
+	let fallback;
 
-const insertSuspense = (id, content) => {
-	try {
-		document.querySelector('[data-suspense-fallback="' + id + '"]').replaceWith(
-			range.createContextualFragment(content)
-		);
-	} catch (e) {
-		console.error("Failed to insert async content (Suspense boundary id: " + id + ")", e);
-	}
-};`.replace(/[\n\t]/g, '');
+	replacer();
+};
 
-const BOOTSTRAP_SCRIPT_END = `}</script>`
+range.selectNodeContents(document.createElement('template'));
+`.replace(/[\n\t]/g, '');
+
+const SCRIPT_END = `}</script>`
 
 function asyncChunkInsertionHTML(id: number, chunk: string) {
 	return (
-		`insertSuspense(${id}, ${JSON.stringify(chunk)});`
+		`insert(${id}, ${JSON.stringify(chunk)});`
 	);
 }
