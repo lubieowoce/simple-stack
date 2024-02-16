@@ -54,7 +54,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 		console.log(`middleware :: ${suspenseCtx.pending.size} chunks pending`);
 		if (!suspenseCtx.pending.size) return streamController.close();
 
-		yield BOOTSTRAP_SCRIPT;
+		yield BOOTSTRAP_SCRIPT_START;
 
 		// @ts-expect-error ReadableStream does not have asyncIterator
 		for await (const item of stream) {
@@ -62,27 +62,34 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 			console.log("middleware :: yielding", id, chunk);
 			yield asyncChunkInsertionHTML(id, chunk);
 		}
+
+		yield BOOTSTRAP_SCRIPT_END;
 	}
 
 	// @ts-expect-error generator not assignable to ReadableStream
 	return new Response(render(), response.headers);
 });
 
-const BOOTSTRAP_SCRIPT = `<script>
-window.__SIMPLE_SUSPENSE_INSERT = function (id) {
+const BOOTSTRAP_SCRIPT_START = `<script>{
+const range = new Range();
+const template = document.createElement('template');
+
+range.selectNodeContents(template);
+
+const insertSuspense = (id, content) => {
 	try {
-		var template = document.querySelector('[data-suspense="' + id + '"]').content;
-		var dest = document.querySelector('[data-suspense-fallback="' + id + '"]');
-		dest.replaceWith(template);
+		document.querySelector('[data-suspense-fallback="' + id + '"]').replaceWith(
+			range.createContextualFragment(content)
+		);
 	} catch (e) {
 		console.error("Failed to insert async content (Suspense boundary id: " + id + ")", e);
 	}
-};
-</script>`;
+};`.replace(/[\n\t]/g, '');
+
+const BOOTSTRAP_SCRIPT_END = `}</script>`
 
 function asyncChunkInsertionHTML(id: number, chunk: string) {
 	return (
-		`<template data-suspense=${id}>${chunk}</template>` +
-		`<script>window.__SIMPLE_SUSPENSE_INSERT(${id});</script>`
+		`insertSuspense(${id}, ${JSON.stringify(chunk)});`
 	);
 }
